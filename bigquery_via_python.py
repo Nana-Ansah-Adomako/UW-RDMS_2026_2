@@ -71,17 +71,21 @@ st.markdown("Breast cancer cohort from synpuf datasets")
 st.markdown("---")
 
 
-## Bigquery client connection: optimized connection with st.cache_resource
+## Sidebar for Credentials input
+with st.sidebar:
+    st.markdown("### 🔑 BigQuery Authentication")
+    credentials_file = st.file_uploader(
+        "Upload service account JSON", type=["json"]
+    )
+    st.markdown("---")
+
+## BigQuery client connection
 @st.cache_resource
-def get_bq_client():
+def get_bq_client(file_contents: str):
     import json
-    with open("bime-530-jk-itk-naa-aao-b995da087b19.json") as f:
-        info = json.load(f)
+    info = json.loads(file_contents)
     credentials = service_account.Credentials.from_service_account_info(info)
     return bigquery.Client(credentials=credentials, project=info["project_id"])
-
-client = get_bq_client()
-
 
 
 ## SQL query for ETL
@@ -172,8 +176,12 @@ def load_cohort(_client) -> pd.DataFrame:
     df = _client.query(fetch_query).to_dataframe()
     return df
 ## load data
-df = load_cohort(client)
-
+if credentials_file:
+    client = get_bq_client(credentials_file.getvalue().decode("utf-8"))
+    df = load_cohort(client)
+else:
+    st.sidebar.warning("⬆️ Please upload your service account JSON to continue.")
+    st.stop()
 
 
 ## summary statistics for dashboard PI metrics
@@ -358,7 +366,7 @@ with st.expander("🗂 Preview Raw Data"):
 st.markdown("---")
 st.markdown(
     "<p style='text-align:center; color:#3d637e; font-size:0.8rem;'>"
-    "Patient Outcomes Dashboard · Built with Streamlit & Altair · Data: CMS Synthetic OMOP via BigQuery"
+    "Patients Outcome Dashboard · Built with Streamlit & Altair · Data: CMS Synthetic OMOP via BigQuery"
     "</p>",
     unsafe_allow_html=True,
 )

@@ -465,7 +465,14 @@ with st.expander("🗂 Preview Raw Data"):
     st.caption(f"Showing up to 200 of {len(df):,} data rows.")
 
 
-
+# -- Footer ---
+st.markdown("---")
+st.markdown(
+    "<p style='text-align:center; color:#3d637e; font-size:0.8rem;'>"
+    "Patients Outcome Dashboard · Built with Streamlit & Altair · Data: CMS Synthetic OMOP via BigQuery"
+    "</p>",
+    unsafe_allow_html=True,
+)
 
 
 

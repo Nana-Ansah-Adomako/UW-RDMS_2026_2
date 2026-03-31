@@ -310,6 +310,106 @@ combined = chart_config(donut | bar)
 st.altair_chart(combined, use_container_width=True)
 
 
+# OR stats table
+@st.cache_data
+def compute_summary(_df):
+    groups = sorted(_df["treatment_group"].dropna().unique())
+    ref_grp = groups[0]
+
+    # Build raw counts first 
+    rows = []
+    contingency = []  # for multiple testing correction
+
+    for grp in groups:
+        g     = _df[_df["treatment_group"] == grp]
+        died  = (g["died_within_1_year"] == "Yes").sum()
+        alive = (g["died_within_1_year"] == "No").sum()
+        rows.append({
+            "Treatment Group": grp,
+            "N":               len(g),
+            "Died ≤1 Yr (n)": int(died),
+            "Died ≤1 Yr (%)": f"{round(died / len(g) * 100, 1)}%",
+            "_died":           died,
+            "_alive":          alive,
+        })
+        contingency.append([died, alive])
+
+    # Raw p-values via Fisher's exact (each group vs reference) 
+    ref_died  = rows[0]["_died"]
+    ref_alive = rows[0]["_alive"]
+    raw_p     = []
+
+    for row in rows:
+        if row["Treatment Group"] == ref_grp:
+            raw_p.append(np.nan)
+            continue
+        table = np.array([[row["_died"], row["_alive"]], [ref_died, ref_alive]])
+        _, p  = stats.fisher_exact(table)
+        raw_p.append(p)
+
+    #  Benjamini-Hochberg FDR correction 
+    non_ref_p   = [(i, p) for i, p in enumerate(raw_p) if not np.isnan(p)]
+    m           = len(non_ref_p)
+    sorted_p    = sorted(non_ref_p, key=lambda x: x[1])
+    adjusted    = [np.nan] * len(raw_p)
+
+    for rank, (i, p) in enumerate(sorted_p, start=1):
+        adjusted[i] = min(p * m / rank, 1.0)
+
+    # Odds Ratios + CI 
+    summary = []
+    for idx, row in enumerate(rows):
+        grp   = row["Treatment Group"]
+        died  = row["_died"]
+        alive = row["_alive"]
+
+        if grp == ref_grp:
+            or_str, ci_str, p_str = "1.00 (ref)", "—", "—"
+        elif 0 in [died, alive, ref_died, ref_alive]:
+            or_str, ci_str, p_str = "N/A", "—", "—"
+        else:
+            OR     = (died * ref_alive) / (alive * ref_died)
+            se     = np.sqrt(1/died + 1/alive + 1/ref_died + 1/ref_alive)
+            lo, hi = np.exp(np.log(OR) - 1.96 * se), np.exp(np.log(OR) + 1.96 * se)
+            adj_p  = adjusted[idx]
+            or_str = f"{OR:.2f}"
+            ci_str = f"{lo:.2f} – {hi:.2f}"
+            p_str  = f"{adj_p:.3f}" if adj_p >= 0.001 else "<0.001"
+
+        summary.append({
+            "Treatment Group": grp,
+            "Died ≤1 Yr (n)": row["Died ≤1 Yr (n)"],
+            "Died ≤1 Yr (%)": row["Died ≤1 Yr (%)"],
+            "OR (vs ref)":    or_str,
+            "95% CI":         ci_str,
+            "Adj. p-value":   p_str,
+        })
+
+    return pd.DataFrame(summary)
+
+# Render 
+st.markdown("#### 1-Year Mortality Odds by Treatment Group")
+
+summary_df = compute_summary(df)
+
+st.dataframe(
+    summary_df,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "N": st.column_config.NumberColumn("N", format="%d"),
+        "Died ≤1 Yr (n)": st.column_config.NumberColumn("Died ≤1yr (n)", format="%d"),
+    }
+)
+
+ref_label = sorted(df["treatment_group"].dropna().unique())[0]
+st.caption(
+    f"OR = Odds Ratio for dying within 1 year vs **{ref_label}** (reference). "
+    f"95% CI via Woolf method. P-value corrected for multiple comparisons using Benjamini-Hochberg FDR."
+)
+
+
+
 # filter by age
 st.markdown("---")
 st.markdown("## Age at Diagnosis Distribution")
@@ -361,15 +461,6 @@ with st.expander("🗂 Preview Raw Data"):
         height=300,
     )
     st.caption(f"Showing up to 200 of {len(df):,} data rows.")
-
-# -- Footer ---
-st.markdown("---")
-st.markdown(
-    "<p style='text-align:center; color:#3d637e; font-size:0.8rem;'>"
-    "Patients Outcome Dashboard · Built with Streamlit & Altair · Data: CMS Synthetic OMOP via BigQuery"
-    "</p>",
-    unsafe_allow_html=True,
-)
 
 
 

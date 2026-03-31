@@ -403,7 +403,7 @@ st.dataframe(
 ref_label = sorted(df["treatment_group"].dropna().unique())[0]
 st.caption(
     f"OR = Odds Ratio for dying within 1 year vs **{ref_label}** (reference). "
-    f"95% CI via Woolf method. P-value corrected for multiple comparisons using Benjamini-Hochberg FDR."
+    f"P-value corrected for multiple comparisons using Benjamini-Hochberg FDR."
 )
 
 

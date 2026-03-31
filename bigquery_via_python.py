@@ -94,80 +94,76 @@ def get_bq_client(file_contents: str):
 
 etl_query = """ 
 -- View for Breast Cancer cohort
+-- FOR STATISTICAL ANALYSIS AND DASHBOARD DEVELOPMENT
+-- Female Breast cancer cohort
 CREATE OR REPLACE VIEW `breast_cancer_study.cohort` AS
 SELECT 
     p.person_id,
     p.year_of_birth,
     p.race_concept_id,
     race.concept_name AS race_name,
-    p.ethnicity_concept_id,
     ethnicity.concept_name AS ethnicity_name,
-
     MIN(co.condition_start_date) AS first_diagnosis_date,
     EXTRACT(YEAR FROM MIN(co.condition_start_date)) AS diagnosis_year,
     EXTRACT(YEAR FROM MIN(co.condition_start_date)) - p.year_of_birth AS age_at_diagnosis,
-
     d.death_date,
     EXTRACT(YEAR FROM d.death_date) AS death_year,
     CASE WHEN d.death_date IS NOT NULL THEN 'Deceased' ELSE 'Alive' END AS vital_status,
-    DATE_DIFF(d.death_date, MIN(co.condition_start_date), DAY) AS survival_days
-FROM `bigquery-public-data.cms_synthetic_patient_data_omop.person` AS p
-JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.condition_occurrence` AS co 
-    ON p.person_id = co.person_id
-JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS diagnosis 
-    ON co.condition_concept_id = diagnosis.concept_id
-LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS race 
-    ON p.race_concept_id = race.concept_id
-LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS ethnicity 
-    ON p.ethnicity_concept_id = ethnicity.concept_id
-LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.death` AS d 
-    ON p.person_id = d.person_id
-WHERE p.gender_concept_id = 8532 
-    AND (diagnosis.concept_name LIKE '%female breast%' 
-    OR diagnosis.concept_name LIKE '%breast%cancer%' 
-    OR diagnosis.concept_name LIKE '%neoplasm%breast%')
-GROUP BY 
-    p.person_id, 
-    p.year_of_birth, 
-    p.race_concept_id, 
-    race.concept_name,
-    p.ethnicity_concept_id,
-    ethnicity.concept_name,
-    d.death_date;
-
-
--- View for Breast cancer cohort with Treatment status
-CREATE OR REPLACE VIEW `breast_cancer_study.cohort_with_treatment_groups` AS
-SELECT 
-    c.*,
-    t.first_treatment_date,
-    DATE_DIFF(t.first_treatment_date, c.first_diagnosis_date, DAY) AS days_to_treatment,
+    DATE_DIFF(d.death_date, MIN(co.condition_start_date), DAY) AS survival_days,
+    MIN(treatment_dates.first_treatment_date) AS first_treatment_date,
+    DATE_DIFF(MIN(treatment_dates.first_treatment_date), MIN(co.condition_start_date), DAY) AS days_to_treatment,
     CASE 
-        WHEN t.first_treatment_date IS NULL THEN 'No treatment'
-        WHEN DATE_DIFF(t.first_treatment_date, c.first_diagnosis_date, DAY) < 0 THEN 'Treatment before recorded diagnosis'
-        WHEN DATE_DIFF(t.first_treatment_date, c.first_diagnosis_date, DAY) <= 30 THEN 'Early treatment (0-30 days)'
-        WHEN DATE_DIFF(t.first_treatment_date, c.first_diagnosis_date, DAY) <= 90 THEN 'Late treatment (31-90 days)'
+        WHEN MIN(treatment_dates.first_treatment_date) IS NULL THEN 'No treatment'
+        WHEN DATE_DIFF(MIN(treatment_dates.first_treatment_date), MIN(co.condition_start_date), DAY) < 0 THEN 'Treatment before diagnosis'
+        WHEN DATE_DIFF(MIN(treatment_dates.first_treatment_date), MIN(co.condition_start_date), DAY) <= 30 THEN 'Early treatment (0-30 days)'
+        WHEN DATE_DIFF(MIN(treatment_dates.first_treatment_date), MIN(co.condition_start_date), DAY) <= 90 THEN 'Late treatment (31-90 days)'
         ELSE 'Very late treatment (>90 days)'
     END AS treatment_group
-FROM `breast_cancer_study.cohort` AS c
+FROM `bigquery-public-data.cms_synthetic_patient_data_omop.person` AS p
+JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.condition_occurrence` AS co
+    ON p.person_id = co.person_id
+JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS diagnosis
+    ON co.condition_concept_id = diagnosis.concept_id
+LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS race
+    ON p.race_concept_id = race.concept_id
+LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.concept` AS ethnicity
+    ON p.ethnicity_concept_id = ethnicity.concept_id
+LEFT JOIN `bigquery-public-data.cms_synthetic_patient_data_omop.death` AS d
+    ON p.person_id = d.person_id
 LEFT JOIN (
     SELECT 
         person_id,
         MIN(treatment_date) AS first_treatment_date
     FROM (
+        -- Here is our nested loop
         SELECT person_id, procedure_datetime AS treatment_date
         FROM `bigquery-public-data.cms_synthetic_patient_data_omop.procedure_occurrence`
+        
         UNION ALL
+        
         SELECT person_id, drug_exposure_start_date AS treatment_date
         FROM `bigquery-public-data.cms_synthetic_patient_data_omop.drug_exposure`
     )
     GROUP BY person_id
-) AS t ON c.person_id = t.person_id;
+) AS treatment_dates
+ON p.person_id = treatment_dates.person_id
+WHERE 
+    p.gender_concept_id = 8532
+    AND (diagnosis.concept_name LIKE '%female breast%'
+         OR diagnosis.concept_name LIKE '%breast%cancer%'
+         OR diagnosis.concept_name LIKE '%neoplasm%breast%')
+GROUP BY 
+    p.person_id,
+    p.year_of_birth,
+    p.race_concept_id,
+    race.concept_name,
+    ethnicity.concept_name,
+    d.death_date;
 """
 
 fetch_query = """
 -- cohort data  with treatment groups
-SELECT * FROM `breast_cancer_study.cohort_with_treatment_groups`
+SELECT * FROM `breast_cancer_study.cohort`
 """
 
 @st.cache_data(ttl=600, show_spinner="Querying BigQuery…")
